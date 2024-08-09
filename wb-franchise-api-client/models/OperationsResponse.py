@@ -29,7 +29,7 @@ class OperationsByDate(BaseModel):
 
 
 class OperationsResponse(BaseModel):
-    balance: int
+    balance: float
     currency_code: str
     plan_payment_date: str
     details: list[OperationsByDate]
