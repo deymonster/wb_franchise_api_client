@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "wb-franchise-api-client"
+version = "0.1.0"
+description = ""
+authors = ["deymonster <deymonster@yandex.ru>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+aiohttp = "^3.9.5"
+pydantic = "^2.8.2"
+pydantic-settings = "^2.3.4"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
