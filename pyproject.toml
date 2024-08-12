@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = ["deymonster <deymonster@yandex.ru>"]
 readme = "README.md"
-packages = [{ include = "api_client", from = "src" }]
+packages = [{ include = "src" }]
 
 
 
