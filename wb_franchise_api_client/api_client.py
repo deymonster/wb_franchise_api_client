@@ -1,6 +1,6 @@
 import aiohttp
 from typing import Optional, Dict, Any
-from models import *
+from .models import *
 import json
 
 from .api_config import APIConfig, HTTPException

@@ -1,7 +1,7 @@
 import aiohttp
 from typing import Optional, Dict, Any
 from .api_config import APIConfig, HTTPException
-from models import TokenResponse, RequestCodeResponse
+from .models import TokenResponse, RequestCodeResponse
 
 
 class ApiAuth:
