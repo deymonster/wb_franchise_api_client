@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "wb-franchise-api-client"
+name = "wb_franchise_api_client"
 version = "0.1.0"
 description = ""
 authors = ["deymonster <deymonster@yandex.ru>"]
