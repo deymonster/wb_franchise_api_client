@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 from models import *
 import json
 
-from api_config import APIConfig, HTTPException
+from .api_config import APIConfig, HTTPException
 
 
 class ApiClient:
