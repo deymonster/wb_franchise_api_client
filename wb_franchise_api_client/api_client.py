@@ -15,7 +15,15 @@ class ApiClient:
 
     def __init__(self, access_token: str, api_config: APIConfig) -> None:
         self.api_config = api_config
-        self.headers = {
+        self.access_token = access_token
+        self.headers = self._build_headers(access_token)
+
+    def _build_headers(self, access_token: str) -> Dict[str, str]:
+        """Build headers with current access token
+
+        :param access_token: access token for requests
+        """
+        return {
             "Accept": "application/json.txt, text/plain, */*",
             "Referer": "https://franchise.wildberries.ru/",
             "Content-Type": "application/json",
@@ -23,6 +31,10 @@ class ApiClient:
             "sec-ch-ua-platform": "Windows",
             "Authorization": f"Bearer {access_token}",
         }
+
+    def update_access_token(self, new_access_token: str) -> None:
+        self.access_token = new_access_token
+        self.headers = self._build_headers(new_access_token)
 
     async def _get_response_data_wb(self,
                                     *,
