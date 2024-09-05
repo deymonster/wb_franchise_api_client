@@ -2,8 +2,10 @@ import aiohttp
 from typing import Optional, Dict, Any
 from .models import *
 import json
+import redis.asyncio as aioredis
 
 from .api_config import APIConfig, HTTPException
+from .api_auth import ApiAuth
 
 
 class ApiClient:
@@ -13,10 +15,19 @@ class ApiClient:
     :param api_config: APIConfig instance
     """
 
-    def __init__(self, access_token: str, api_config: APIConfig) -> None:
+    def __init__(self, api_config: APIConfig, api_auth: ApiAuth, redis_client: aioredis.Redis, phone: str):
         self.api_config = api_config
-        self.access_token = access_token
-        self.headers = self._build_headers(access_token)
+        self.redis_client = redis_client
+        self.api_auth = api_auth
+        self.phone = phone
+        self.access_token = None
+        self.headers = {}
+        self._initialize_headers()
+
+    def _initialize_headers(self):
+        """Initialize headers with the current access token if available."""
+        if self.access_token:
+            self.headers = self._build_headers(self.access_token)
 
     def _build_headers(self, access_token: str) -> Dict[str, str]:
         """Build headers with current access token
@@ -32,27 +43,33 @@ class ApiClient:
             "Authorization": f"Bearer {access_token}",
         }
 
-    def update_access_token(self, new_access_token: str) -> None:
+    async def update_access_token(self, new_access_token: str) -> None:
+        """Update the access token and save it in Redis."""
         self.access_token = new_access_token
         self.headers = self._build_headers(new_access_token)
+        if self.redis_client:
+            await self.redis_client.set(f"{self.phone}:access_token", new_access_token)
 
-    async def _get_response_data_wb(self,
-                                    *,
-                                    method: str,
-                                    path: str,
-                                    params: Optional[Dict[str, Any]] = None,
-                                    data: Optional[Dict[str, Any]] = None,
-                                    return_status: bool = False, prefix: str) -> Dict[str, Any] | int:
-        """Common method to get response from API
+    async def _request_token(self) -> None:
+        """Refresh the token if needed and update it."""
+        if self.redis_client:
+            refresh_token = await self.redis_client.get(f"{self.phone}:refresh_token")
+            if not refresh_token:
+                raise HTTPException("Refresh token not found")
 
-        :param method: HTTP method
-        :param path: API path
-        :param params: API params
-        :param data: API data
-        :param return_status: Return status code or not
-        :param prefix: API prefix to determine where was an error
-        :return Response
-        """
+            new_tokens = await self.api_auth.connect_code(username=self.phone, refresh_token=refresh_token)
+            await self.update_access_token(new_tokens.access_token)
+
+    async def _request_with_retry(self,
+                                  *,
+                                  session: aiohttp.ClientSession,
+                                  method: str,
+                                  url: str,
+                                  params: Optional[Dict[str, Any]] = None,
+                                  data: Optional[Dict[str, Any]] = None,
+                                  prefix: str,
+                                  attempt=1):
+        """Make a request with a possible token refresh and retry on 401"""
         ERROR_STATUS = {
             "account": "Ошибка получения данных аккаунта",
             "sales": "Ошибка получения данных по продажам",
@@ -67,35 +84,61 @@ class ApiClient:
             "employees": f"Ошибка получения данных по сотрудникам",
             "employees_operations": f"Ошибка получения данных по операциям сотрудников",
         }
+        async with session.request(method, url, params=params, json=data, headers=self.headers) as response:
+            if response.status == 401 and attempt == 1:
+                await self._request_token()
+                return await self._request_with_retry(
+                    session=session,
+                    method=method,
+                    url=url,
+                    params=params,
+                    data=data,
+                    prefix=prefix,
+                    attempt=2)
+            elif response.status in {400, 403, 429, 500}:
+                raise HTTPException(response.status, f"{ERROR_STATUS.get(prefix, 'Ошибка')}: { await response.text()}")
+
+            try:
+                return await response.json()
+            except aiohttp.ContentTypeError:
+                response_text = await response.text()
+                content_type = response.headers.get("Content-Type", '')
+                if content_type.startswith("text/plain"):
+                    try:
+                        return json.loads(response_text)
+                    except json.JSONDecodeError:
+                        raise HTTPException(response.status,
+                                            f"{ERROR_STATUS.get(prefix, 'Ошибка')} (JSONDecodeError): "
+                                            f"{response_text} (Content-Type: {content_type})")
+                else:
+                    raise HTTPException(response.status,
+                                        f"{ERROR_STATUS.get(prefix, 'Ошибка')} (ContentTypeError): "
+                                        f"{response_text} (Content-Type: {content_type})")
+
+    async def _get_response_data_wb(self,
+                                    *,
+                                    method: str,
+                                    path: str,
+                                    params: Optional[Dict[str, Any]] = None,
+                                    data: Optional[Dict[str, Any]] = None,
+                                    return_status: bool = False, prefix: str) -> Dict[str, Any] | int:
+        """Common method to get response from API -  Общий метод
+
+        :param method: HTTP method
+        :param path: API path
+        :param params: API params
+        :param data: API data
+        :param return_status: Return status code or not
+        :param prefix: API prefix to determine where was an error
+        :return Response
+        """
+
         url = self.api_config.base_path + path
         async with aiohttp.ClientSession() as session:
-            async with session.request(
-                    method,
-                    url,
-                    params=params,
-                    json=data,
-                    headers=self.headers,
-            ) as response:
-                if return_status:
-                    return response.status
-                try:
-                    response_data = await response.json()
-                except aiohttp.ContentTypeError:
-                    response_text = await response.text()
-                    content_type = response.headers.get('Content-Type', '')
-                    if content_type.startswith('text/plain'):
-                        try:
-                            response_data = json.loads(response_text)
-                        except json.JSONDecodeError:
-                            raise HTTPException(response.status,
-                                                f"{ERROR_STATUS.get(prefix, 'Ошибка')} (Invalid response from server): {response_text} (Content-Type: {content_type})")
-                    else:
-                        raise HTTPException(response.status,
-                                            f"{ERROR_STATUS.get(prefix, 'Ошибка')} (Invalid response from server): {response_text} (Content-Type: {content_type})")
-
-                if response.status in {400, 401, 403, 429, 500}:
-                    raise HTTPException(response.status, f"{ERROR_STATUS.get(prefix, 'Ошибка')}: {response_data}")
-                return response_data
+            response_data = await self._request_with_retry(session, method, url, params, data, prefix)
+            if return_status:
+                return response_data.get("status", response_data)
+            return response_data
 
     async def get_account_data(self) -> AccountData:
         """Get account data in Franchise - Общие данные аккаунта"""
@@ -238,15 +281,15 @@ class ApiClient:
         return OperationsResponse(**transformed_data)
 
 
-async def main():
-    api_config = APIConfig(base_path="https://orr-franchise.wildberries.ru")
-    access_token = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjRDRDg5Mjk2NDdCQkQ5RTI5N0IzRDk5MTU2NDhGOTNEMUE4QkRBNEFSUzI1NiIsInR5cCI6ImF0K2p3dCIsIng1dCI6IlROaVNsa2U3MmVLWHM5bVJWa2o1UFJxTDJrbyJ9.eyJleHAiOjE3MjMxOTgxNzgsImlzcyI6IklkZW50aXR5UG9zIiwiY2xpZW50X2lkIjoiZnJhbmNoaXNlIiwic3ViIjoiNzkyODI5NTE3MDkiLCJhdXRoX3RpbWUiOjE3MjMxOTcyNzgsImlkcCI6ImxvY2FsIiwicGhvbmUiOiI3OTI4Mjk1MTcwOSIsImlkIjoiMTAwNTE5MzgiLCJuYW1lIjoi0JrQsNC70LDRiNC90LjQutC-0LLQsCDQndCw0YLQsNC70YzRjyDQktCw0YHQuNC70YzQtdCy0L3QsCIsInBlcm1pc3Npb25zIjoiZnJhbmNoaXNlIiwiZnJfcm9sZSI6IjAiLCJzZXNzaW9uX2lkIjoiOGNmYjIzOGU5OTIyOWNmM2I2OTljMjlhNmUyZDdkZjkwMmRlYjc0ODMwOGM1OTAzMTc3Mjg1YjFkNWI5YTkxMCIsImp0aSI6IjU1RDRCMjc2RjE5N0Y0NDJCNEFEQTYyNzI5Q0IxRTUxIiwiaWF0IjoxNzIzMTk3Mjc4LCJzY29wZSI6WyJvZmZsaW5lX2FjY2VzcyJdLCJhbXIiOlsicGFzc3dvcmQiXX0.RwGoHcYcEqlFvsdwTKiO-H36Zrn9Y0t8zOXRgsuu_b_n56Ko6l2IaQ6YjNXkZGVhlGcwiBUR7r4yfF0vFXV-TabFiJRmi1CUgpJhv-JQeRTiKPO6UNT9Qt1mWIgtCjxwcAuZqWXz_PmFWzeWvrY4BWznviehEZ5eWy_Zu6qAx3Gw1sZTBZQR8gut0qDko16lFkQYbYEf76OGYBQSV03wz7LY8s_K8RMX_b1dIhR8lR5_DwbwyWhBFT0677NZORz-r75ExxMGrqzwuKuKtlK_GdMRovey88yGPUKN0q-R307GCo7w8POHmOR6vaY4aoWIrjtRTRqvm7MUisRIy5aMKQ"
-    api_client = ApiClient(access_token=access_token, api_config=api_config)
-    data = await api_client.get_operations(supplier_id=15730)
-    print(data)
-
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+# async def main():
+#     api_config = APIConfig(base_path="https://orr-franchise.wildberries.ru")
+#     access_token = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjRDRDg5Mjk2NDdCQkQ5RTI5N0IzRDk5MTU2NDhGOTNEMUE4QkRBNEFSUzI1NiIsInR5cCI6ImF0K2p3dCIsIng1dCI6IlROaVNsa2U3MmVLWHM5bVJWa2o1UFJxTDJrbyJ9.eyJleHAiOjE3MjMxOTgxNzgsImlzcyI6IklkZW50aXR5UG9zIiwiY2xpZW50X2lkIjoiZnJhbmNoaXNlIiwic3ViIjoiNzkyODI5NTE3MDkiLCJhdXRoX3RpbWUiOjE3MjMxOTcyNzgsImlkcCI6ImxvY2FsIiwicGhvbmUiOiI3OTI4Mjk1MTcwOSIsImlkIjoiMTAwNTE5MzgiLCJuYW1lIjoi0JrQsNC70LDRiNC90LjQutC-0LLQsCDQndCw0YLQsNC70YzRjyDQktCw0YHQuNC70YzQtdCy0L3QsCIsInBlcm1pc3Npb25zIjoiZnJhbmNoaXNlIiwiZnJfcm9sZSI6IjAiLCJzZXNzaW9uX2lkIjoiOGNmYjIzOGU5OTIyOWNmM2I2OTljMjlhNmUyZDdkZjkwMmRlYjc0ODMwOGM1OTAzMTc3Mjg1YjFkNWI5YTkxMCIsImp0aSI6IjU1RDRCMjc2RjE5N0Y0NDJCNEFEQTYyNzI5Q0IxRTUxIiwiaWF0IjoxNzIzMTk3Mjc4LCJzY29wZSI6WyJvZmZsaW5lX2FjY2VzcyJdLCJhbXIiOlsicGFzc3dvcmQiXX0.RwGoHcYcEqlFvsdwTKiO-H36Zrn9Y0t8zOXRgsuu_b_n56Ko6l2IaQ6YjNXkZGVhlGcwiBUR7r4yfF0vFXV-TabFiJRmi1CUgpJhv-JQeRTiKPO6UNT9Qt1mWIgtCjxwcAuZqWXz_PmFWzeWvrY4BWznviehEZ5eWy_Zu6qAx3Gw1sZTBZQR8gut0qDko16lFkQYbYEf76OGYBQSV03wz7LY8s_K8RMX_b1dIhR8lR5_DwbwyWhBFT0677NZORz-r75ExxMGrqzwuKuKtlK_GdMRovey88yGPUKN0q-R307GCo7w8POHmOR6vaY4aoWIrjtRTRqvm7MUisRIy5aMKQ"
+#     api_client = ApiClient(access_token=access_token, api_config=api_config)
+#     data = await api_client.get_operations(supplier_id=15730)
+#     print(data)
+#
+#
+# if __name__ == "__main__":
+#     import asyncio
+#     asyncio.run(main())
 
