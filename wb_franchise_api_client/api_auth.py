@@ -1,16 +1,22 @@
 import aiohttp
 from typing import Optional, Dict, Any, Union
-from .api_config import APIConfig, HTTPException
+from .api_config import HTTPException
 from .models import TokenResponse, RequestCodeResponse
 
 
 class ApiAuth:
     """Auth client for wb franchise"""
 
-    auth_base_path: str = ""
-    base_path: str = ""
-    verify: Union[bool, str] = True
-    basic_token: Optional[str] = None
+    def __init__(self,
+                 auth_base_path: str,
+                 base_path: str,
+                 verify: bool = True,
+                 basic_token: Optional[str] = None):
+
+        self.auth_base_path = auth_base_path
+        self.base_path = base_path
+        self.verify = verify
+        self.basic_token = basic_token
 
     def get_basic_token(self) -> Optional[str]:
         return self.basic_token
