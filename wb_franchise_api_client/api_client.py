@@ -4,7 +4,7 @@ from .models import *
 import json
 import redis.asyncio as aioredis
 
-from .api_config import APIConfig, HTTPException
+from .api_config import HTTPException
 from .api_auth import ApiAuth
 
 
@@ -15,8 +15,7 @@ class ApiClient:
     :param api_config: APIConfig instance
     """
 
-    def __init__(self, api_config: APIConfig, api_auth: ApiAuth, redis_client: aioredis.Redis, phone: str):
-        self.api_config = api_config
+    def __init__(self, api_auth: ApiAuth, redis_client: aioredis.Redis, phone: str):
         self.redis_client = redis_client
         self.api_auth = api_auth
         self.phone = phone
@@ -133,9 +132,15 @@ class ApiClient:
         :return Response
         """
 
-        url = self.api_config.base_path + path
+        url = self.api_auth.base_path + path
         async with aiohttp.ClientSession() as session:
-            response_data = await self._request_with_retry(session, method, url, params, data, prefix)
+            response_data = await self._request_with_retry(
+                session=session,
+                method=method,
+                url=url,
+                params=params,
+                data=data,
+                prefix=prefix)
             if return_status:
                 return response_data.get("status", response_data)
             return response_data

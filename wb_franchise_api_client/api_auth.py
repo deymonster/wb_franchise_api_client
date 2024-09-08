@@ -1,5 +1,5 @@
 import aiohttp
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from .api_config import APIConfig, HTTPException
 from .models import TokenResponse, RequestCodeResponse
 
@@ -7,15 +7,26 @@ from .models import TokenResponse, RequestCodeResponse
 class ApiAuth:
     """Auth client for wb franchise"""
 
-    def __init__(self, api_config: APIConfig):
-        self.api_config = api_config
-        self.headers = {
+    auth_base_path: str = ""
+    base_path: str = ""
+    verify: Union[bool, str] = True
+    basic_token: Optional[str] = None
+
+    def get_basic_token(self) -> Optional[str]:
+        return self.basic_token
+
+    def set_basic_token(self, token: str):
+        self.basic_token = token
+
+    @property
+    def get_headers(self) -> Dict[str, str]:
+        return {
             "Accept": "application/json",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
             "Connection": "keep-alive",
             "Referer": "https://franchise.wildberries.ru/",
             "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {self.api_config.get_basic_token()}",
+            "Authorization": f"Basic {self.get_basic_token()}",
             "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:91.0) Gecko/20100101 Firefox/91.0"
         }
 
@@ -34,14 +45,14 @@ class ApiAuth:
         :param return_status: Return HTTP status code
         :return: Response
         """
-        url = self.api_config.auth_base_path + path
+        url = self.auth_base_path + path
         async with aiohttp.ClientSession() as session:
             async with session.request(
                     method,
                     url,
                     params=params,
                     data=data,
-                    headers=self.headers,
+                    headers=self.get_headers,
             ) as response:
                 if return_status:
                     return response.status
@@ -98,17 +109,17 @@ class ApiAuth:
             raise HTTPException(response_data, "Unexpected response format")
 
 
-async def main():
-    api_config = APIConfig(auth_base_path="https://auth-orr.wildberries.ru", basic_token="ZnJhbmNoaXNlOjJoVjlPMnVzSk0yRUg1RjU=")
-    api_auth = ApiAuth(api_config)
-    await api_auth.request_code("79282951709")
-    code = input("Enter code: ")
-    response_connect = await api_auth.connect_code(username="79282951709", password=code)
-    print(response_connect)
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+# async def main():
+#     api_config = APIConfig(auth_base_path="https://auth-orr.wildberries.ru", basic_token="ZnJhbmNoaXNlOjJoVjlPMnVzSk0yRUg1RjU=")
+#     api_auth = ApiAuth(api_config)
+#     await api_auth.request_code("79282951709")
+#     code = input("Enter code: ")
+#     response_connect = await api_auth.connect_code(username="79282951709", password=code)
+#     print(response_connect)
+#
+# if __name__ == "__main__":
+#     import asyncio
+#     asyncio.run(main())
 
 
 
