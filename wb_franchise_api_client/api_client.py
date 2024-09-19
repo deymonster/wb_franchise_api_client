@@ -153,6 +153,8 @@ class ApiClient:
                                                          path=path,
                                                          params=params,
                                                          prefix="account")
+        for employee in response_data['employees']:
+            employee['phones'] = [str(phone) for phone in employee['phones']]
         return AccountData(**response_data)
 
     async def get_sales_data(self, office_ids: list[int], date_from: str, date_to: str) -> list[OfficeProceed]:
