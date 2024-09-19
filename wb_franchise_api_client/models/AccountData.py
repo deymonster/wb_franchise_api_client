@@ -11,7 +11,7 @@ class Employee(BaseModel):
     is_deleted: bool
     last_name: str
     middle_name: str
-    phones: list[int]
+    phones: list[str]
     rating: Optional[float] = Field(default=None)
     shortages_sum: Optional[float] = Field(default=None)
 
